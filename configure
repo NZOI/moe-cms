@@ -45,5 +45,12 @@ if (Get("CONFIG_SUBMIT")) {
 	}
 }
 
+if (Get("CONFIG_BOX_KERNEL_AUTO")) {
+	# Auto-detect 64-bit kernel
+	if (Get("ARCH") eq "amd64") {
+		Set("CONFIG_BOX_KERNEL_AMD64" => 1);
+	}
+}
+
 Finish();
 Log "\nConfigured, run `make' to build everything.\n";
