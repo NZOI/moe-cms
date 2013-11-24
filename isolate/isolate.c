@@ -578,6 +578,34 @@ static void apply_dir_rules(void)
     }
 }
 
+static void cleanup_dir_rules(void)
+{
+  for (struct dir_rule *r = first_dir_rule; r; r=r->next)
+    {
+      char *in = r->inside;
+      char *out = r->outside;
+      if (!out)
+	{
+	  msg("Nothing bound on %s\n", r->inside);
+	  continue;
+	}
+
+      if ((r->flags & DIR_FLAG_MAYBE) && !dir_exists(out))
+	{
+	  msg("Haven't bound %s on %s (does not exist)\n", out, r->inside);
+	  continue;
+	}
+
+      char root_in[1024];
+      snprintf(root_in, sizeof(root_in), "%s/root/%s", box_dir, in);
+
+      msg("Unmounting %s\n", root_in);
+      umount(root_in);
+      if (rmdir(root_in) < 0 && dir_exists(root_in))
+	die("Dir %s exists after unmounting and removing: %m", root_in);
+    }
+}
+
 /*** Control groups ***/
 
 static char cg_path[256];
@@ -951,6 +979,21 @@ check_timeout(void)
 }
 
 static void
+cleanup_root(void)
+{
+  char root[1024];
+  snprintf(root, sizeof(root), "%s/root", box_dir);
+
+  for (int i=0;i<3 && dir_exists(root);i++) {
+    cleanup_dir_rules();
+
+    umount(root);
+
+    rmtree(root);
+  }
+}
+
+static void
 box_keeper(void)
 {
   read_errors_from_fd = error_pipes[0];
@@ -994,6 +1037,7 @@ box_keeper(void)
 	die("wait4: unknown pid %d exited!", p);
       box_pid = 0;
 
+      cleanup_root();
       // Check error pipe if there is an internal error passed from inside the box
       char interr[1024];
       int n = read(read_errors_from_fd, interr, sizeof(interr) - 1);
@@ -1205,16 +1249,13 @@ run(char **argv)
         fcntl(error_pipes[i], F_SETFL, fcntl(error_pipes[i], F_GETFL) | O_NONBLOCK) < 0)
       die("fcntl on pipe: %m");
 
-  box_pid = clone(
-    box_inside,			// Function to execute as the body of the new process
-    argv,			// Pass our stack
-    SIGCHLD | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWPID,
-    argv);			// Pass the arguments
+  box_pid = fork();
   if (box_pid < 0)
-    die("clone: %m");
+    die("fork: %m");
   if (!box_pid)
-    die("clone returned 0");
-  box_keeper();
+    box_inside(argv);
+  else
+    box_keeper();
 }
 
 static void
